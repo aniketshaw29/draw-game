@@ -55,7 +55,7 @@ draw-game/
 
 ## Game Rules
 
-- Room default `rounds = playerCount` (everyone draws once, min 3, max 8).
+- Room default `rounds = playerCount` (everyone draws exactly once, up to 8).
 - Each round: random drawer, random word, 80s timer.
 - Drawer sees the word; guessers see underscores.
 - **Scoring** (tiered by speed):
