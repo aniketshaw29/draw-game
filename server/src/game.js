@@ -2,22 +2,25 @@ import { pickWord, mask, checkGuess } from './words.js';
 import { emitToRoom, scoreboard, sendState } from './state.js';
 
 const ROUND_TIME = Number(process.env.ROUND_TIME || 80);
-const REVEAL_MS = 5000;
+const REVEAL_MS = 5000; // pause between rounds to show the word
 const MAX_SCORE = 100;
 const MIN_SCORE = 10;
 
+// Points decay linearly with time: guessing early scores more.
 function guessPoints(round) {
   const elapsed = (Date.now() - round.startsAt) / 1000;
-  const t = Math.min(1, Math.max(0, elapsed / round.timeLimit));
+  const t = Math.min(1, Math.max(0, elapsed / round.timeLimit)); // 0 → 1
   return Math.round(MAX_SCORE - (MAX_SCORE - MIN_SCORE) * t);
 }
 
 export function startGame(room) {
   const order = [...room.players.keys()];
+  // Every player draws exactly once, so round count == player count.
   room.game = {
     rounds: Math.min(order.length, 8),
     order,
-    drawerIndex: 0,
+    drawerIndex: 0, // walks through `order` as the rounds progress
+    roundNumber: 0,
     round: null,
     timer: null,
     usedWords: new Set(),
@@ -33,6 +36,7 @@ export function startRound(room) {
   g.drawerIndex += 1;
   const drawer = room.players.get(drawerId);
 
+  // Reset per-round flags for everyone, then mark the new drawer.
   room.players.forEach((p) => {
     p.isDrawer = false;
     p.hasGuessed = false;
@@ -48,8 +52,9 @@ export function startRound(room) {
     ended: false,
   };
   g.round = round;
-  g.strokes = [];
+  g.strokes = []; // fresh canvas each round
 
+  // Personalized roundStart: the drawer receives the word, guessers only a mask.
   const timeLeft = ROUND_TIME;
   room.players.forEach((p) => {
     p.socket.emit('roundStart', {
@@ -71,6 +76,8 @@ export function startRound(room) {
 function startTimer(room) {
   clearTimer(room);
   const g = room.game;
+  // One interval per round; computes remaining time from the absolute deadline
+  // so drift from slow ticks doesn't accumulate. Cleared on round end.
   g.timer = setInterval(() => {
     const round = g.round;
     if (!round || round.ended) {
@@ -96,6 +103,8 @@ export function clearTimer(room) {
   }
 }
 
+// Returns { points, word } on a correct guess, otherwise null. The drawer's
+// own messages and repeated guesses from an already-guessed player never score.
 export function handleGuess(room, player, text) {
   const round = room.game?.round;
   if (!round || round.ended) return null;
@@ -106,12 +115,14 @@ export function handleGuess(room, player, text) {
   player.hasGuessed = true;
   player.score += points;
   const drawer = room.players.get(round.drawerId);
-  if (drawer) drawer.score += points;
+  if (drawer) drawer.score += points; // drawer earns what each guesser earns
 
+  // Reveal the word privately to the guesser; broadcast the score change.
   player.socket.emit('yourGuessCorrect', { word: round.word, points });
   emitToRoom(room, 'correctGuess', { name: player.name, points });
   sendState(room);
 
+  // End the round early once every guesser has solved it.
   const guessers = [...room.players.values()].filter((p) => p.id !== round.drawerId);
   if (guessers.length > 0 && guessers.every((p) => p.hasGuessed)) {
     endRound(room, 'all_guessed');
@@ -130,6 +141,7 @@ function endRound(room, reason) {
   emitToRoom(room, 'roundEnd', { word: round.word, reason, scores });
   sendState(room);
 
+  // Auto-advance: reveal for REVEAL_MS, then the next round or game over.
   if (g.roundNumber >= g.rounds) {
     room.nextRoundTimer = setTimeout(() => endGame(room), REVEAL_MS);
   } else {
@@ -137,6 +149,7 @@ function endRound(room, reason) {
   }
 }
 
+// Called when the drawer disconnects mid-round so the game can continue.
 export function abortRound(room) {
   if (room.game?.round && !room.game.round.ended) endRound(room, 'drawer_left');
 }

@@ -1,5 +1,7 @@
 import { mask } from './words.js';
 
+// Build a room snapshot for ONE player. It is personalized so the word is only
+// revealed to the drawer and to guessers who already solved the round.
 export function snapshot(room, selfId) {
   const round = room.game?.round || null;
   const me = room.players.get(selfId);
@@ -32,7 +34,7 @@ export function snapshot(room, selfId) {
           )),
         }
       : null,
-    strokes: room.game ? room.game.strokes : [],
+    strokes: room.game ? room.game.strokes : [], // full history for late joiners
   };
 }
 
@@ -47,6 +49,7 @@ export function scoreboard(room) {
     .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
 }
 
+// Broadcast to every player in the room.
 export function emitToRoom(room, event, payload) {
   if (!room) return;
   room.players.forEach((p) => p.socket.emit(event, payload));

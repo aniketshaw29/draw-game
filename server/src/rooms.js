@@ -1,9 +1,12 @@
+// In-memory room registry. Rooms hold all authoritative game state and are
+// deleted when the last player leaves (a server restart loses every room).
 const rooms = new Map();
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
 
 export const MIN_PLAYERS = Number(process.env.MIN_PLAYERS || 2);
 export const MAX_PLAYERS = Number(process.env.MAX_PLAYERS || 8);
 
+// Generate a unique 4-letter code (I/O excluded to avoid ambiguous chars).
 function generateCode() {
   let code;
   do {
@@ -19,6 +22,7 @@ export function getRoom(code) {
   return code ? rooms.get(String(code).trim().toUpperCase()) : null;
 }
 
+// The socket tracks which room it belongs to in socket.data.roomCode.
 export function findRoomBySocket(socket) {
   return socket.data.roomCode ? rooms.get(socket.data.roomCode) : null;
 }
@@ -27,10 +31,10 @@ export function createRoom(socket) {
   const code = generateCode();
   const room = {
     code,
-    players: new Map(),
-    hostId: socket.id,
-    state: 'lobby',
-    game: null,
+    players: new Map(), // socketId -> player
+    hostId: socket.id, // first joiner becomes host; can start the game
+    state: 'lobby', // 'lobby' | 'playing' | 'gameover'
+    game: null, // populated by game.js while a game is running
   };
   rooms.set(code, room);
   return room;
@@ -41,6 +45,7 @@ export function sanitizeName(name) {
   return cleaned || 'Player';
 }
 
+// Append a numeric suffix to duplicate nicknames within a room.
 export function uniqueName(room, name) {
   const names = new Set([...room.players.values()].map((p) => p.name));
   if (!names.has(name)) return name;
@@ -51,7 +56,7 @@ export function uniqueName(room, name) {
 
 export function addPlayer(room, socket, name) {
   const player = {
-    socket,
+    socket, // kept so game.js can emit to this player directly
     id: socket.id,
     name: uniqueName(room, sanitizeName(name)),
     score: 0,
@@ -59,7 +64,7 @@ export function addPlayer(room, socket, name) {
     hasGuessed: false,
   };
   room.players.set(socket.id, player);
-  socket.join(room.code);
+  socket.join(room.code); // join the socket.io room for broadcast scope
   return player;
 }
 
@@ -71,6 +76,7 @@ export function removePlayer(room, socket) {
   return player;
 }
 
+// If the host leaves, promote the oldest remaining player.
 export function promoteHost(room) {
   const next = [...room.players.keys()][0] ?? null;
   room.hostId = next;
